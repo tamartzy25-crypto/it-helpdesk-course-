@@ -168,6 +168,29 @@ td code { white-space: nowrap; }
   .progress .txt { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* Listen player */
+.shell { padding-bottom: 120px; }
+.reading { background: var(--accent-soft); border-radius: 6px; box-shadow: 0 0 0 4px var(--accent-soft); }
+tr.reading td { background: var(--accent-soft); }
+.player {
+  position: fixed; inset: auto 0 0 0; z-index: 6; background: var(--surface); border-top: 1px solid var(--line);
+  padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px)); padding-top: 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.player-in { max-width: 1180px; margin: 0 auto; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.play { width: 46px; height: 46px; border-radius: 50%; border: 0; background: var(--accent); color: var(--bg); cursor: pointer; display: grid; place-items: center; flex: none; }
+.play svg { width: 20px; height: 20px; }
+.play:hover { filter: brightness(1.08); }
+.p-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.p-title { font-family: var(--font-display); font-weight: 500; font-size: .95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.p-status { font-size: .8rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.p-ctrl { display: flex; align-items: center; gap: 12px; font-size: .85rem; color: var(--muted); flex-wrap: wrap; }
+.p-ctrl select { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+.p-ctrl label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.p-ctrl input { accent-color: var(--accent); width: 16px; height: 16px; }
+.p-stop { font: 500 .8rem var(--font-body); background: none; border: 1px solid var(--line); color: var(--fg); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+@media (max-width: 560px) { .p-ctrl { width: 100%; justify-content: space-between; } }
 </style>
 
 <header class="top" dir="rtl">
@@ -191,6 +214,30 @@ td code { white-space: nowrap; }
     <ul id="tree-list"></ul>
   </nav>
   <main id="main" tabindex="-1"></main>
+</div>
+
+<div class="player" dir="rtl" role="region" aria-label="האזנה לקורס">
+  <div class="player-in">
+    <button type="button" class="play" id="p-play" aria-label="האזנה למודול">
+      <svg id="p-ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M15 10 6 4.5v11z" fill="currentColor"/></svg>
+    </button>
+    <div class="p-info">
+      <span class="p-title" id="p-title">האזנה למודול</span>
+      <span class="p-status" id="p-status" aria-live="polite">לחצי על הכפתור כדי לשמוע את המודול מוקרא</span>
+    </div>
+    <div class="p-ctrl">
+      <label for="p-rate">מהירות
+        <select id="p-rate">
+          <option value="0.85">0.85×</option>
+          <option value="1" selected>1×</option>
+          <option value="1.2">1.2×</option>
+          <option value="1.4">1.4×</option>
+        </select>
+      </label>
+      <label for="p-auto"><input type="checkbox" id="p-auto" checked> המשך למודול הבא</label>
+      <button type="button" class="p-stop" id="p-stop" hidden>עצירה</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -691,7 +738,97 @@ toggle.addEventListener('click', () => {
   toggle.setAttribute('aria-expanded', String(open));
 });
 
-window.addEventListener('hashchange', () => show(location.hash.slice(1), true));
+/* ---------- listen player (browser speech synthesis, Hebrew voice on the device) ---------- */
+const synth = window.speechSynthesis;
+const P = { playing: false, items: [], i: 0, mod: null, autoNav: false };
+const pPlay = $('#p-play'), pIco = $('#p-ico'), pTitle = $('#p-title'), pStatus = $('#p-status'), pStop = $('#p-stop'), pRate = $('#p-rate'), pAuto = $('#p-auto');
+const ICO_PLAY = '<path d="M15 10 6 4.5v11z" fill="currentColor"/>';
+const ICO_PAUSE = '<rect x="5" y="4" width="3.5" height="12" rx="1" fill="currentColor"/><rect x="11.5" y="4" width="3.5" height="12" rx="1" fill="currentColor"/>';
+try { const pr = JSON.parse(localStorage.getItem(KEY + '-player')); if (pr) { pRate.value = pr.rate || '1'; pAuto.checked = pr.auto !== false; } } catch (e) {}
+const savePlayer = () => { try { localStorage.setItem(KEY + '-player', JSON.stringify({ rate: pRate.value, auto: pAuto.checked })); } catch (e) {} };
+pRate.addEventListener('change', () => { savePlayer(); if (P.playing) { synth.cancel(); speakNext(); } });
+pAuto.addEventListener('change', savePlayer);
+
+let heVoice = null;
+function pickVoice() {
+  if (!synth) return;
+  const vs = synth.getVoices().filter(v => /^(he|iw)/i.test(v.lang));
+  heVoice = vs.find(v => /natural|online|neural/i.test(v.name)) || vs.find(v => /google/i.test(v.name)) || vs[0] || null;
+}
+if (synth) { pickVoice(); synth.onvoiceschanged = pickVoice; }
+
+const READ_SEL = '.mod-head h2, .prose h3, .prose > p, .prose li, .prose tr, .callout .k, .callout p';
+function readables() {
+  return [...main.querySelectorAll(READ_SEL)].filter(el => !el.closest('.code, .dn-demo') && !el.querySelector('th'));
+}
+function textOf(el) {
+  let t = el.tagName === 'TR' ? [...el.cells].map(c => c.textContent.trim()).join('. ') : el.textContent;
+  return t.replace(/[→←]/g, ', ').replace(/\s+/g, ' ').trim();
+}
+function chunks(t) {
+  const out = [];
+  t.split(/(?<=[.:!?])\s+/).forEach(s => {
+    while (s.length > 220) { const cut = s.lastIndexOf(' ', 220); out.push(s.slice(0, cut > 0 ? cut : 220)); s = s.slice(cut > 0 ? cut + 1 : 220); }
+    if (s) out.push(s);
+  });
+  return out;
+}
+function buildQueue() {
+  const q = [];
+  readables().forEach((el, idx) => chunks(textOf(el)).forEach(c => q.push({ idx, text: c })));
+  return q;
+}
+function highlight(idx) {
+  main.querySelectorAll('.reading').forEach(e => e.classList.remove('reading'));
+  if (idx == null) return;
+  const el = readables()[idx];
+  if (el) { el.classList.add('reading'); const r = el.getBoundingClientRect(); if (r.top < 90 || r.bottom > innerHeight - 110) el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); }
+}
+function setUI() {
+  pIco.innerHTML = P.playing ? ICO_PAUSE : ICO_PLAY;
+  pPlay.setAttribute('aria-label', P.playing ? 'השהיה' : 'האזנה למודול');
+  pStop.hidden = !P.playing && P.i === 0;
+  const m = MODULES.find(x => x.id === (P.mod || current));
+  pTitle.textContent = m ? m.title : 'האזנה למודול';
+}
+function speakNext() {
+  if (!P.playing) return;
+  if (P.i >= P.items.length) return finished();
+  const it = P.items[P.i];
+  highlight(it.idx);
+  const u = new SpeechSynthesisUtterance(it.text);
+  u.lang = 'he-IL'; if (heVoice) u.voice = heVoice;
+  u.rate = parseFloat(pRate.value) || 1;
+  u.onend = () => { if (!P.playing) return; P.i++; speakNext(); };
+  u.onerror = (e) => { if (e.error === 'interrupted' || e.error === 'canceled') return; P.playing = false; setUI(); pStatus.textContent = 'ההקראה נעצרה בגלל שגיאה בקול של המכשיר. נסי שוב.'; };
+  pStatus.textContent = 'קטע ' + (P.i + 1) + ' מתוך ' + P.items.length + (heVoice ? '' : ' · לא נמצא קול עברי במכשיר');
+  synth.speak(u);
+}
+function start() {
+  if (!synth) { pStatus.textContent = 'הדפדפן הזה לא תומך בהקראה. נסי Chrome או Edge.'; return; }
+  if (P.mod !== current || !P.items.length) { P.mod = current; P.items = buildQueue(); P.i = 0; }
+  synth.cancel(); P.playing = true; setUI(); speakNext();
+}
+function pause() { P.playing = false; synth && synth.cancel(); setUI(); pStatus.textContent = 'מושהה · לחצי כדי להמשיך מאותו מקום'; }
+function stop(msg) { P.playing = false; synth && synth.cancel(); P.items = []; P.i = 0; P.mod = null; highlight(null); setUI(); pStatus.textContent = msg || 'לחצי על הכפתור כדי לשמוע את המודול מוקרא'; }
+function finished() {
+  const idx = MODULES.findIndex(m => m.id === P.mod);
+  const next = MODULES[idx + 1];
+  if (pAuto.checked && next) {
+    P.items = []; P.i = 0; P.mod = null; P.autoNav = true;
+    go(next.id);
+    setTimeout(() => { P.autoNav = false; start(); }, 400);
+  } else { stop(next ? 'המודול הסתיים' : 'סיימת להאזין לכל הקורס'); }
+}
+pPlay.addEventListener('click', () => P.playing ? pause() : start());
+pStop.addEventListener('click', () => stop());
+setUI();
+
+window.addEventListener('hashchange', () => {
+  show(location.hash.slice(1), true);
+  if (!P.autoNav && P.mod && P.mod !== current) stop();
+  setUI();
+});
 document.documentElement.setAttribute('dir', 'rtl');
 document.documentElement.setAttribute('lang', 'he');
 const firstOpen = MODULES.find(m => !state.done[m.id]) || MODULES[0];
