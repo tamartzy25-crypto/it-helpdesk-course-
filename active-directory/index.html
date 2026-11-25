@@ -1,0 +1,699 @@
+<title>Active Directory לתמיכה</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rubik:wght@500;700&family=Heebo:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a directory tree (DC=corp → OU per module) on the start side acts as the course map; one module ("OU") is open at a time in the reading pane. */
+:root {
+  --bg: #f3f6f7;
+  --surface: #ffffff;
+  --sunken: #e7eef0;
+  --fg: #14232a;
+  --muted: #58707a;
+  --line: #d3dfe3;
+  --accent: #0b6f79;
+  --accent-soft: #d8eef0;
+  --warn: #9a5b0b;
+  --warn-soft: #fbefdc;
+  --good: #1d7a43;
+  --good-soft: #dcf3e5;
+  --bad: #b3322f;
+  --bad-soft: #fbe3e2;
+  --code-bg: #10202a;
+  --code-fg: #d7ecef;
+  --code-key: #7fd6de;
+  --font-display: "Rubik", "Heebo", system-ui, sans-serif;
+  --font-body: "Heebo", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d1619; --surface: #142126; --sunken: #0a1215; --fg: #e2ecee; --muted: #93abb3; --line: #24363d;
+    --accent: #5cc7d0; --accent-soft: #143a3f; --warn: #f0b45e; --warn-soft: #3a2a12;
+    --good: #6fd39a; --good-soft: #143425; --bad: #f08a86; --bad-soft: #3d1a19;
+    --code-bg: #071013; --code-fg: #d7ecef; --code-key: #7fd6de; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d1619; --surface: #142126; --sunken: #0a1215; --fg: #e2ecee; --muted: #93abb3; --line: #24363d;
+  --accent: #5cc7d0; --accent-soft: #143a3f; --warn: #f0b45e; --warn-soft: #3a2a12;
+  --good: #6fd39a; --good-soft: #143425; --bad: #f08a86; --bad-soft: #3d1a19;
+  --code-bg: #071013; --code-fg: #d7ecef; --code-key: #7fd6de; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: var(--font-body); font-size: 16px; line-height: 1.7;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; line-height: 1.25; margin: 0; }
+code, .mono { font-family: var(--font-mono); font-size: .88em; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+.top {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  background: var(--bg); border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; gap: 12px; padding-block: 12px;
+  max-width: 1180px; margin: 0 auto;
+}
+.brand { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.brand h1 { font-size: 1.15rem; }
+.brand .dn { font-family: var(--font-mono); font-size: .75rem; color: var(--muted); direction: ltr; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.progress { display: flex; align-items: center; gap: 10px; font-size: .85rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.bar { width: 120px; height: 8px; background: var(--sunken); border-radius: 99px; overflow: hidden; }
+.bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .4s ease; }
+.map-toggle { display: none; }
+
+.shell { max-width: 1180px; margin: 0 auto; display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 32px; padding-block: 24px 64px; }
+
+/* Directory tree */
+.tree { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 80px); align-self: start; font-size: .92rem; }
+.tree .root { font-family: var(--font-mono); font-size: .8rem; color: var(--muted); direction: ltr; text-align: right; padding: 0 6px 8px; display: flex; gap: 6px; justify-content: flex-end; align-items: center; }
+.tree ul { list-style: none; margin: 0; padding: 0; border-right: 1px dashed var(--line); margin-right: 14px; }
+.tree li { position: relative; }
+.tree li::before { content: ""; position: absolute; right: 0; top: 50%; width: 12px; border-top: 1px dashed var(--line); }
+.tree button {
+  all: unset; box-sizing: border-box; cursor: pointer; display: grid; grid-template-columns: 22px 1fr auto; align-items: center; gap: 8px;
+  width: calc(100% - 14px); margin-right: 14px; padding: 7px 8px; border-radius: 6px; color: var(--fg);
+}
+.tree button:hover { background: var(--sunken); }
+.tree button[aria-current="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
+.tree button:focus-visible { outline: 2px solid var(--accent); }
+.tree .ico { width: 18px; height: 14px; }
+.tree .min { font-size: .75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tree .done .min { color: var(--good); }
+.tree .label { min-width: 0; }
+.tree .label small { display: block; font-family: var(--font-mono); font-size: .7rem; color: var(--muted); direction: ltr; text-align: right; }
+
+/* Reading pane */
+main { min-width: 0; }
+main:focus { outline: none; }
+.mod-head { display: flex; flex-direction: column; gap: 6px; margin-bottom: 20px; }
+.eyebrow { font-family: var(--font-mono); font-size: .78rem; color: var(--accent); letter-spacing: .02em; direction: ltr; text-align: right; }
+.mod-head h2 { font-size: clamp(1.6rem, 3.5vw, 2.2rem); }
+.mod-head .meta { color: var(--muted); font-size: .9rem; }
+.prose { max-width: 68ch; }
+.prose h3 { font-size: 1.2rem; margin-top: 30px; margin-bottom: 8px; }
+.prose p { margin: 0 0 14px; }
+.prose ul, .prose ol { margin: 0 0 14px; padding-right: 22px; }
+.prose li { margin-bottom: 6px; }
+.prose code { background: var(--sunken); padding: 1px 6px; border-radius: 4px; direction: ltr; unicode-bidi: isolate; }
+.prose strong { font-weight: 700; }
+
+.callout { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 14px 16px; margin: 18px 0; }
+.callout .k { font-family: var(--font-display); font-weight: 700; font-size: .85rem; display: block; margin-bottom: 4px; }
+.callout.tip { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); background: var(--accent-soft); }
+.callout.tip .k { color: var(--accent); }
+.callout.ticket { border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); background: var(--warn-soft); }
+.callout.ticket .k { color: var(--warn); }
+.callout p:last-child, .callout ol:last-child, .callout ul:last-child { margin-bottom: 0; }
+
+.code { position: relative; margin: 14px 0 18px; border-radius: 10px; background: var(--code-bg); color: var(--code-fg); overflow: hidden; max-width: 100%; }
+.code pre { margin: 0; padding: 40px 16px 14px; overflow-x: auto; direction: ltr; text-align: left; font-family: var(--font-mono); font-size: .84rem; line-height: 1.6; }
+.code .c { color: #7f98a0; }
+.code .k { color: var(--code-key); }
+.code button { position: absolute; top: 8px; left: 8px; font: 500 .75rem var(--font-body); background: rgba(255,255,255,.08); color: var(--code-fg); border: 1px solid rgba(255,255,255,.15); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+.code button:hover { background: rgba(255,255,255,.16); }
+
+.tbl { overflow-x: auto; margin: 14px 0 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+th, td { text-align: right; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-family: var(--font-display); font-weight: 500; background: var(--sunken); }
+tr:last-child td { border-bottom: 0; }
+td code { white-space: nowrap; }
+
+.dn-demo { font-family: var(--font-mono); direction: ltr; text-align: left; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px; font-size: .85rem; overflow-x: auto; margin: 14px 0 18px; line-height: 2; }
+.dn-demo span { padding: 2px 6px; border-radius: 4px; }
+.dn-demo .cn { background: var(--warn-soft); color: var(--warn); }
+.dn-demo .ou { background: var(--accent-soft); color: var(--accent); }
+.dn-demo .dc { background: var(--sunken); color: var(--muted); }
+
+/* Quiz */
+.quiz { margin-top: 36px; border-top: 1px solid var(--line); padding-top: 24px; max-width: 68ch; }
+.quiz h3 { font-size: 1.2rem; margin-bottom: 4px; }
+.quiz .sub { color: var(--muted); font-size: .9rem; margin: 0 0 16px; }
+.q { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 14px; }
+.q .qt { font-weight: 500; margin: 0 0 10px; }
+.opts { display: grid; gap: 8px; }
+.opt { all: unset; box-sizing: border-box; cursor: pointer; border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; background: var(--bg); line-height: 1.5; }
+.opt:hover:not([disabled]) { border-color: var(--accent); }
+.opt:focus-visible { outline: 2px solid var(--accent); }
+.opt[disabled] { cursor: default; }
+.opt.right { border-color: var(--good); background: var(--good-soft); color: var(--good); font-weight: 500; }
+.opt.wrong { border-color: var(--bad); background: var(--bad-soft); color: var(--bad); }
+.opt code { direction: ltr; unicode-bidi: isolate; }
+.explain { margin: 10px 0 0; font-size: .92rem; color: var(--muted); }
+.explain b { color: var(--fg); }
+
+.nav { display: flex; gap: 10px; flex-wrap: wrap; justify-content: space-between; margin-top: 28px; max-width: 68ch; }
+.btn { font: 500 .95rem var(--font-body); border-radius: 8px; padding: 10px 18px; cursor: pointer; border: 1px solid var(--line); background: var(--surface); color: var(--fg); }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.done { background: var(--good-soft); border-color: var(--good); color: var(--good); }
+
+.score { font-family: var(--font-display); font-size: 1.1rem; margin-top: 8px; }
+
+@media (max-width: 860px) {
+  .shell { grid-template-columns: minmax(0, 1fr); gap: 16px; padding-block: 16px 48px; }
+  .map-toggle { display: inline-flex; }
+  .tree { position: static; display: none; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 8px; }
+  .tree.open { display: block; }
+  .bar { width: 64px; }
+  .progress .txt { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<header class="top" dir="rtl">
+  <div class="brand">
+    <h1>Active Directory לתמיכה</h1>
+    <div class="dn" id="cur-dn">OU=Course,DC=helpdesk,DC=local</div>
+  </div>
+  <div class="progress" aria-live="polite">
+    <span class="txt" id="prog-txt">0 מתוך 8 הושלמו</span>
+    <div class="bar" role="progressbar" aria-label="התקדמות בקורס" id="prog-bar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="prog-fill"></i></div>
+  </div>
+  <button class="btn map-toggle" id="map-toggle" aria-expanded="false" aria-controls="tree">מפת הקורס</button>
+</header>
+
+<div class="shell" dir="rtl">
+  <nav class="tree" id="tree" aria-label="מודולים בקורס">
+    <div class="root">
+      <span>DC=helpdesk,DC=local</span>
+      <svg class="ico" viewBox="0 0 18 14" aria-hidden="true"><rect x="1" y="1" width="16" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="5" cy="7" r="1.6" fill="currentColor"/></svg>
+    </div>
+    <ul id="tree-list"></ul>
+  </nav>
+  <main id="main" tabindex="-1"></main>
+</div>
+
+<script>
+const ICON_OU = '<svg class="ico" viewBox="0 0 18 14" aria-hidden="true"><path d="M1 3a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>';
+const ICON_DONE = '<svg class="ico" viewBox="0 0 18 14" aria-hidden="true"><path d="M1 3a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2z" fill="currentColor" opacity=".18"/><path d="M5.5 7.5l2.2 2.2 4.8-4.8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+const code = (txt) => {
+  const esc = txt.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const hl = esc.split('\n').map(l => l.trim().startsWith('#') ? '<span class="c">' + l + '</span>' : l.replace(/\b([A-Z][a-z]+-AD[A-Za-z]+|[A-Z][a-z]+-[A-Z][A-Za-z]+)\b/g, '<span class="k">$1</span>')).join('\n');
+  return '<div class="code"><button type="button" data-copy>העתקה</button><pre>' + hl + '</pre></div>';
+};
+
+const MODULES = [
+{
+  id: 'basics', ou: 'OU=01-Basics', title: 'מה זה בכלל Active Directory', min: 5,
+  body: `
+<p><strong>Active Directory Domain Services (AD DS)</strong> הוא "ספר הטלפונים" והשומר בכניסה של רשת ארגונית מבוססת Windows. הוא שומר במקום אחד את כל המשתמשים, המחשבים, הקבוצות וההרשאות, ומחליט מי רשאי להתחבר ולאן.</p>
+<p>בלי AD, לכל מחשב היו משתמשים מקומיים משלו. עם AD, משתמש אחד (<code>dana.levi</code>) מתחבר עם אותה סיסמה לכל מחשב בארגון, ומנהל ה-IT שולט בהכול ממקום אחד.</p>
+
+<h3>המושגים שחייבים להכיר</h3>
+<div class="tbl"><table>
+<tr><th>מושג</th><th>מה זה בפועל</th></tr>
+<tr><td><b>Domain</b> (דומיין)</td><td>גבול ניהולי אחד עם שם DNS, למשל <code>corp.local</code>. כל האובייקטים שבו חולקים מדיניות סיסמאות ומנהלים.</td></tr>
+<tr><td><b>Domain Controller (DC)</b></td><td>שרת שמריץ את AD, שומר עותק של מסד הנתונים (<code>NTDS.dit</code>) ומאמת התחברויות. בארגון תקין יש לפחות שניים.</td></tr>
+<tr><td><b>Object</b> (אובייקט)</td><td>כל דבר שנשמר ב-AD: משתמש, מחשב, קבוצה, מדפסת, OU.</td></tr>
+<tr><td><b>Attribute</b> (מאפיין)</td><td>שדה של אובייקט: שם, טלפון, מחלקה, תאריך שינוי סיסמה.</td></tr>
+<tr><td><b>Tree / Forest</b></td><td>עץ הוא כמה דומיינים עם שם משותף (<code>corp.local</code>, <code>il.corp.local</code>). יער הוא אוסף של עצים, וזה גבול האבטחה העליון.</td></tr>
+<tr><td><b>Replication</b></td><td>שינוי שנעשה ב-DC אחד מועתק לשאר ה-DCs. זה לוקח זמן, בעיקר בין אתרים.</td></tr>
+</table></div>
+
+<h3>AD ו-DNS לא נפרדים</h3>
+<p>מחשבים מוצאים את ה-DC דרך רשומות DNS מסוג SRV. אם מחשב מקבל DNS חיצוני (למשל <code>8.8.8.8</code>) במקום ה-DNS של הדומיין, הוא לא ימצא DC. ההתחברות תיכשל או תהיה איטית מאוד.</p>
+<div class="callout tip"><span class="k">כלל אצבע לתמיכה</span><p>כשמשהו "מוזר" בהתחברות לדומיין, בדקו קודם DNS: <code>ipconfig /all</code> ובדקו שה-DNS Server הוא ה-DC.</p></div>
+
+<h3>הכלים שתפתחו הכי הרבה</h3>
+<div class="tbl"><table>
+<tr><th>כלי</th><th>פקודה להרצה</th><th>למה</th></tr>
+<tr><td>Active Directory Users and Computers</td><td><code>dsa.msc</code></td><td>משתמשים, מחשבים, קבוצות, OUs. תפתחו אותו כל יום.</td></tr>
+<tr><td>Group Policy Management</td><td><code>gpmc.msc</code></td><td>צפייה וניהול של GPOs.</td></tr>
+<tr><td>AD Sites and Services</td><td><code>dssite.msc</code></td><td>אתרים, רפליקציה.</td></tr>
+<tr><td>Active Directory Administrative Center</td><td><code>dsac.exe</code></td><td>ממשק חדש יותר, כולל סל מחזור של AD.</td></tr>
+</table></div>`,
+  quiz: [
+    { q: 'מה התפקיד של Domain Controller?', o: ['שרת קבצים שבו נשמרות תיקיות הבית', 'שרת שמחזיק את מסד הנתונים של AD ומאמת התחברויות', 'נתב שמחבר בין אתרים', 'שרת שמריץ את Exchange'], a: 1, e: 'ה-DC מחזיק עותק של NTDS.dit ומטפל באימות (Kerberos/NTLM).' },
+    { q: 'משתמש מדווח שההתחברות למחשב חדש לוקחת 5 דקות ובסוף נכשלת. ב-ipconfig רואים DNS 8.8.8.8. מה הבעיה הסבירה?', o: ['הסיסמה פגה', 'המחשב לא מוצא את ה-DC כי הוא שואל DNS חיצוני', 'הכרטיס הרשת איטי', 'חסר רישיון Windows'], a: 1, e: 'המחשב מאתר DC בעזרת רשומות SRV ב-DNS של הדומיין. DNS ציבורי לא מכיר אותן.' },
+    { q: 'איזו פקודה פותחת את Active Directory Users and Computers?', o: ['<code>gpmc.msc</code>', '<code>dsa.msc</code>', '<code>compmgmt.msc</code>', '<code>dssite.msc</code>'], a: 1, e: '<code>dsa.msc</code> הוא ADUC. כדאי להוסיף אותו לשורת המשימות.' }
+  ]
+},
+{
+  id: 'structure', ou: 'OU=02-Structure', title: 'מבנה: OUs, Containers ושמות', min: 5,
+  body: `
+<p>בתוך הדומיין, האובייקטים מסודרים בתיקיות. יש שני סוגי תיקיות, וההבדל ביניהם חשוב.</p>
+<div class="tbl"><table>
+<tr><th></th><th>Organizational Unit (OU)</th><th>Container (CN)</th></tr>
+<tr><td>דוגמה</td><td><code>OU=HR</code>, <code>OU=Laptops</code></td><td><code>CN=Users</code>, <code>CN=Computers</code></td></tr>
+<tr><td>אפשר לקשר אליו GPO?</td><td>כן</td><td>לא</td></tr>
+<tr><td>אפשר להאציל הרשאות (Delegation)?</td><td>כן</td><td>מוגבל</td></tr>
+<tr><td>מי יוצר</td><td>מנהלי הדומיין</td><td>נוצר אוטומטית בהתקנה</td></tr>
+</table></div>
+<div class="callout ticket"><span class="k">מלכודת נפוצה</span><p>מחשב חדש שהצטרף לדומיין נוחת כברירת מחדל ב-<code>CN=Computers</code>. זה Container, ולכן שום GPO של מחלקה לא חל עליו. אם "המדיניות לא עובדת" על מחשב חדש, בדקו שהועבר ל-OU הנכון.</p></div>
+
+<h3>Distinguished Name (DN)</h3>
+<p>לכל אובייקט יש כתובת מלאה שנקראת DN. קוראים אותה מימין לשמאל: מהדומיין, דרך ה-OUs, עד האובייקט עצמו.</p>
+<div class="dn-demo"><span class="cn">CN=Dana Levi</span>,<span class="ou">OU=Users</span>,<span class="ou">OU=HR</span>,<span class="ou">OU=TLV</span>,<span class="dc">DC=corp</span>,<span class="dc">DC=local</span></div>
+<ul>
+<li><b>CN</b> (Common Name): שם האובייקט או Container</li>
+<li><b>OU</b>: יחידה ארגונית</li>
+<li><b>DC</b> (Domain Component): חלק משם הדומיין. כאן זה לא Domain Controller.</li>
+</ul>
+
+<h3>שני שמות התחברות למשתמש</h3>
+<div class="tbl"><table>
+<tr><th>שם</th><th>מאפיין</th><th>פורמט</th></tr>
+<tr><td>Pre-Windows 2000</td><td><code>sAMAccountName</code></td><td><code>CORP\\dana.levi</code> (עד 20 תווים)</td></tr>
+<tr><td>UPN</td><td><code>userPrincipalName</code></td><td><code>dana.levi@corp.com</code></td></tr>
+</table></div>
+<p>שני הפורמטים עובדים במסך ההתחברות. בסביבות עם Microsoft 365, ה-UPN בדרך כלל זהה לכתובת המייל.</p>
+
+<h3>טריק ב-ADUC</h3>
+<p>בתפריט <b>View</b> הפעילו <b>Advanced Features</b>. עכשיו יופיע בכל אובייקט הטאב <b>Attribute Editor</b> (כל המאפיינים הגולמיים), וגם הטאב <b>Object</b> שמראה את הנתיב המלא ואת "Protect object from accidental deletion".</p>`,
+  quiz: [
+    { q: 'למה GPO של מחלקת שיווק לא חל על מחשב שהצטרף זה עתה לדומיין?', o: ['צריך להפעיל את המחשב פעמיים', 'המחשב נמצא ב-CN=Computers, ואי אפשר לקשר GPO ל-Container', 'GPO חל רק על משתמשים', 'הרפליקציה לוקחת שבוע'], a: 1, e: 'מעבירים את המחשב ל-OU של שיווק ומריצים <code>gpupdate /force</code>.' },
+    { q: 'ב-DN <code>CN=PC-042,OU=Laptops,DC=corp,DC=local</code>, מה זה DC?', o: ['Domain Controller', 'Domain Component, חלק משם הדומיין', 'Default Container', 'Device Class'], a: 1, e: 'DC=corp,DC=local הוא פשוט corp.local.' },
+    { q: 'איפה רואים את כל המאפיינים הגולמיים של משתמש ב-ADUC?', o: ['בטאב General', 'בטאב Attribute Editor, אחרי שמפעילים View > Advanced Features', 'רק ב-PowerShell', 'ב-Event Viewer'], a: 1, e: 'בלי Advanced Features הטאב מוסתר.' }
+  ]
+},
+{
+  id: 'users', ou: 'OU=03-Users', title: 'משתמשים: נעילה, סיסמה, השבתה', min: 7,
+  body: `
+<p>רוב הקריאות שמגיעות לתמיכה בנושא AD הן על חשבון משתמש. קודם כל מבחינים בין שלושה מצבים שנראים למשתמש אותו דבר ("אני לא מצליח להתחבר"):</p>
+<div class="tbl"><table>
+<tr><th>מצב</th><th>מה קרה</th><th>מה עושים</th></tr>
+<tr><td><b>Locked out</b> (נעול)</td><td>יותר מדי ניסיונות סיסמה שגויים</td><td>Unlock, ומחפשים את המקור לנעילה</td></tr>
+<tr><td><b>Password expired</b></td><td>הסיסמה עברה את הגיל המקסימלי</td><td>איפוס או שינוי סיסמה</td></tr>
+<tr><td><b>Disabled</b> (מושבת)</td><td>מישהו השבית את החשבון בכוונה (עזיבה, חופשה ארוכה)</td><td>לא מפעילים בלי אישור מנהל</td></tr>
+</table></div>
+
+<h3>בדיקה מהירה של משתמש</h3>
+${code(`# all the important fields in one command
+Get-ADUser dana.levi -Properties LockedOut, Enabled, PasswordExpired, PasswordLastSet, LastLogonDate, LastBadPasswordAttempt, badPwdCount
+
+# same info without the AD module
+net user dana.levi /domain`)}
+
+<h3>שחרור נעילה ואיפוס סיסמה</h3>
+${code(`# unlock
+Unlock-ADAccount -Identity dana.levi
+
+# reset password + force change at next logon
+Set-ADAccountPassword -Identity dana.levi -Reset -NewPassword (Read-Host -AsSecureString "New password")
+Set-ADUser -Identity dana.levi -ChangePasswordAtLogon $true
+
+# all locked accounts in the domain
+Search-ADAccount -LockedOut | Select-Object Name, SamAccountName`)}
+<p>ב-ADUC: קליק ימני על המשתמש, <b>Reset Password</b>. בחלון יש תיבה <b>Unlock the user's account</b> ותיבה <b>User must change password at next logon</b>.</p>
+
+<div class="callout ticket"><span class="k">תרחיש: "ננעלתי שוב חמש דקות אחרי ששחררתם"</span>
+<p>משהו ממשיך לנסות את הסיסמה הישנה. מקורות נפוצים:</p>
+<ol>
+<li>הטלפון הנייד עם תיבת מייל ארגונית שעוד מוגדרת עם הסיסמה הישנה</li>
+<li>סיסמה שמורה ב-Credential Manager (<code>control keymgr.dll</code>)</li>
+<li>כונן ממופה או משימה מתוזמנת שרצה עם פרטי המשתמש</li>
+<li>סשן RDP פתוח על שרת אחר</li>
+</ol>
+<p>איך מוצאים את המקור: ב-Event Viewer של ה-DC שמחזיק את תפקיד PDC Emulator, יומן Security, מחפשים <b>Event ID 4740</b>. השדה <b>Caller Computer Name</b> מראה מאיזה מחשב הגיעה הנעילה.</p></div>
+
+<h3>Event IDs ששווה לזכור</h3>
+<div class="tbl"><table>
+<tr><th>ID</th><th>משמעות</th></tr>
+<tr><td><code>4740</code></td><td>חשבון ננעל</td></tr>
+<tr><td><code>4625</code></td><td>התחברות נכשלה</td></tr>
+<tr><td><code>4771</code></td><td>Kerberos pre-authentication נכשל (בדרך כלל סיסמה שגויה)</td></tr>
+<tr><td><code>4767</code></td><td>חשבון שוחרר מנעילה</td></tr>
+<tr><td><code>4724</code></td><td>בוצע איפוס סיסמה</td></tr>
+</table></div>
+
+<h3>משתמש עוזב את הארגון</h3>
+<p>לא מוחקים מיד. התהליך הנפוץ: משביתים (<code>Disable-ADAccount</code>), מוסיפים בתיאור תאריך וכרטיס, מעבירים ל-<code>OU=Disabled Users</code>, ומוחקים אחרי תקופה שהארגון קבע. מחיקה מוחקת גם את ה-SID, ויצירה מחדש באותו שם <b>לא</b> מחזירה את ההרשאות.</p>`,
+  quiz: [
+    { q: 'משתמש ננעל שוב ושוב כל כמה דקות אחרי ששחררת אותו. מה הצעד הבא?', o: ['לאפס סיסמה שוב ושוב', 'לחפש Event ID 4740 ב-DC ולבדוק את Caller Computer Name', 'להשבית את החשבון', 'לכבות את מדיניות הנעילה בדומיין'], a: 1, e: 'צריך למצוא את המכשיר שמנסה סיסמה ישנה. בדרך כלל זה טלפון או סיסמה שמורה.' },
+    { q: 'החשבון של משתמש מסומן Disabled. הוא מבקש שתפעילו. מה עושים?', o: ['מפעילים, זה כנראה טעות', 'בודקים למה הושבת ומפעילים רק עם אישור מנהל או לפי נוהל', 'יוצרים לו משתמש חדש', 'מאפסים סיסמה'], a: 1, e: 'השבתה היא פעולה מכוונת: עזיבה, השעיה, אבטחה. לא עוקפים אותה.' },
+    { q: 'מחקתם בטעות משתמש ויצרתם אותו מחדש באותו שם. למה אין לו גישה לתיקיות?', o: ['צריך לחכות לרפליקציה', 'לחשבון החדש יש SID חדש, וההרשאות היו קשורות ל-SID הישן', 'הסיסמה לא נכונה', 'צריך הפעלה מחדש של השרת'], a: 1, e: 'הרשאות נשמרות לפי SID ולא לפי שם. לכן משביתים ולא מוחקים, ואם אפשר משחזרים מ-AD Recycle Bin.' }
+  ]
+},
+{
+  id: 'groups', ou: 'OU=04-Groups', title: 'קבוצות והרשאות', min: 6,
+  body: `
+<p>לא נותנים הרשאות למשתמשים ישירות. נותנים לקבוצה, ומכניסים לקבוצה משתמשים. ככה כשמישהו עובר מחלקה, מזיזים אותו בין קבוצות ולא רודפים אחרי עשרות הרשאות.</p>
+
+<h3>סוג הקבוצה</h3>
+<div class="tbl"><table>
+<tr><th>סוג</th><th>שימוש</th></tr>
+<tr><td><b>Security</b></td><td>נותנת הרשאות (תיקיות, מדפסות, אפליקציות). יכולה לשמש גם כרשימת תפוצה.</td></tr>
+<tr><td><b>Distribution</b></td><td>רשימת תפוצה למייל בלבד. אי אפשר לתת לה הרשאות.</td></tr>
+</table></div>
+
+<h3>היקף הקבוצה (Scope)</h3>
+<div class="tbl"><table>
+<tr><th>Scope</th><th>מי יכול להיות חבר</th><th>איפה אפשר לתת הרשאה</th></tr>
+<tr><td><b>Global</b></td><td>משתמשים מאותו דומיין</td><td>בכל הדומיינים ביער</td></tr>
+<tr><td><b>Domain Local</b></td><td>כמעט כל אחד מכל דומיין ביער</td><td>רק בדומיין שלה</td></tr>
+<tr><td><b>Universal</b></td><td>כל אחד מכל דומיין ביער</td><td>בכל היער</td></tr>
+</table></div>
+
+<h3>השיטה: AGDLP</h3>
+<p><b>A</b>ccounts נכנסים ל-<b>G</b>lobal groups, שנכנסות ל-<b>D</b>omain <b>L</b>ocal groups, שמקבלות <b>P</b>ermissions.</p>
+<div class="dn-demo"><span class="cn">dana.levi</span> → <span class="ou">G-HR-Staff</span> → <span class="ou">DL-HR-Share-Modify</span> → <span class="dc">\\\\fs01\\HR (Modify)</span></div>
+<p>ברוב הארגונים שמות הקבוצות מספרים מה הן עושות. למדו את מוסכמת השמות אצלכם, וזה יחסוך לכם חצי מהחיפושים.</p>
+
+<h3>פקודות</h3>
+${code(`# which groups is the user in
+Get-ADPrincipalGroupMembership dana.levi | Select-Object Name
+
+# who is in a group
+Get-ADGroupMember "G-HR-Staff" | Select-Object Name, SamAccountName
+
+# add / remove
+Add-ADGroupMember -Identity "G-HR-Staff" -Members dana.levi
+Remove-ADGroupMember -Identity "G-HR-Staff" -Members dana.levi
+
+# on the user's PC: groups in the current logon token
+whoami /groups`)}
+
+<div class="callout ticket"><span class="k">תרחיש: "הוספתם אותי לקבוצה ועדיין אין לי גישה"</span>
+<p>רשימת הקבוצות נכנסת ל-token של המשתמש <b>בזמן ההתחברות</b>. שינוי בקבוצות לא חל על סשן פתוח.</p>
+<ol>
+<li>בקשו מהמשתמש להתנתק ולהתחבר מחדש (Sign out, לא נעילת מסך)</li>
+<li>בדקו עם <code>whoami /groups</code> שהקבוצה מופיעה</li>
+<li>אם עדיין לא: ייתכן שהשינוי עוד לא עבר רפליקציה ל-DC שהמחשב מדבר איתו</li>
+<li>לגישה לשיתופים אפשר לנסות גם <code>klist purge</code> ואז לגשת שוב</li>
+</ol></div>
+
+<div class="callout tip"><span class="k">קבוצות שלא נוגעים בהן בלי אישור</span><p><code>Domain Admins</code>, <code>Enterprise Admins</code>, <code>Schema Admins</code>, <code>Administrators</code>. הוספה אליהן היא פעולה רגישה ובדרך כלל מנוטרת.</p></div>`,
+  quiz: [
+    { q: 'הוספת משתמש לקבוצה שנותנת גישה לתיקייה. הוא עדיין מקבל Access Denied. מה הדבר הראשון לעשות?', o: ['לתת לו הרשאה ישירה על התיקייה', 'לבקש ממנו להתנתק ולהתחבר מחדש', 'להוסיף אותו ל-Domain Admins', 'לאתחל את שרת הקבצים'], a: 1, e: 'הקבוצות נקבעות ב-token בזמן ההתחברות.' },
+    { q: 'איזה סוג קבוצה לא יכול לקבל הרשאות על תיקייה?', o: ['Security Global', 'Security Domain Local', 'Distribution', 'Security Universal'], a: 2, e: 'Distribution משמשת רק לדיוור.' },
+    { q: 'לפי AGDLP, למה נותנים את ההרשאה על התיקייה עצמה?', o: ['למשתמש', 'לקבוצת Global', 'לקבוצת Domain Local', 'ל-OU'], a: 2, e: 'משתמשים בקבוצת Global, היא בתוך Domain Local, וה-Domain Local מקבלת את ההרשאה.' }
+  ]
+},
+{
+  id: 'gpo', ou: 'OU=05-GroupPolicy', title: 'Group Policy', min: 7,
+  body: `
+<p><b>Group Policy Object (GPO)</b> הוא אוסף הגדרות שה-AD דוחף למחשבים ולמשתמשים: מיפוי כוננים, מדפסות, רקע שולחן עבודה, חסימת USB, הגדרות אבטחה, התקנת תוכנות.</p>
+<p>לכל GPO יש שני חלקים: <b>Computer Configuration</b> (חל על מחשבים בהפעלה) ו-<b>User Configuration</b> (חל על משתמשים בהתחברות). GPO משפיע רק על אובייקטים שנמצאים ב-OU שאליו הוא מקושר, או ב-OUs שמתחתיו.</p>
+
+<h3>סדר ההחלה: LSDOU</h3>
+<div class="tbl"><table>
+<tr><th>סדר</th><th>רמה</th><th>הערה</th></tr>
+<tr><td>1</td><td><b>L</b>ocal</td><td>מדיניות מקומית של המחשב</td></tr>
+<tr><td>2</td><td><b>S</b>ite</td><td>מקושר לאתר ב-Sites and Services</td></tr>
+<tr><td>3</td><td><b>D</b>omain</td><td>למשל Default Domain Policy</td></tr>
+<tr><td>4</td><td><b>OU</b></td><td>מההורה אל הילד. ה-OU הקרוב ביותר לאובייקט אחרון.</td></tr>
+</table></div>
+<p>מה שמוחל אחרון גובר בהתנגשות. לכן GPO ברמת OU בדרך כלל גובר על GPO ברמת הדומיין. יש שני חריגים:</p>
+<ul>
+<li><b>Enforced</b>: GPO שמסומן ככה גובר גם על GPOs ברמות נמוכות יותר ולא נחסם.</li>
+<li><b>Block Inheritance</b>: מוגדר על OU, ועוצר GPOs מרמות גבוהות יותר (חוץ מ-Enforced).</li>
+</ul>
+<p>יש גם <b>Security Filtering</b>: אפשר להגביל GPO כך שיחול רק על קבוצה מסוימת (ברירת המחדל: Authenticated Users).</p>
+
+<h3>הכלים בצד הלקוח</h3>
+${code(`# pull and apply policy now
+gpupdate /force
+
+# summary: which GPOs applied, which were filtered
+gpresult /r
+
+# only the computer side (run as admin)
+gpresult /r /scope computer
+
+# full HTML report
+gpresult /h C:\\Temp\\gp.html`)}
+<p>כלי נוסף: <code>rsop.msc</code> מראה את התוצאה הסופית בממשק גרפי.</p>
+
+<div class="callout ticket"><span class="k">תרחיש: "הכונן הממופה לא מופיע אצלי"</span>
+<ol>
+<li><code>gpresult /r</code>: האם ה-GPO של המיפוי מופיע תחת Applied, או תחת Filtered/Denied?</li>
+<li>אם הוא לא מופיע בכלל: בדקו שהמשתמש (או המחשב) נמצא ב-OU שאליו ה-GPO מקושר</li>
+<li>אם Filtered: בדקו Security Filtering, אולי המשתמש לא בקבוצה הנכונה</li>
+<li><code>gpupdate /force</code> ואז התנתקות והתחברות. הגדרות User רבות (כמו מיפוי כוננים) חלות רק בהתחברות.</li>
+<li>הגדרות תוכנה וחלק מהגדרות Computer דורשות אתחול</li>
+</ol></div>
+
+<div class="callout tip"><span class="k">זמן רענון</span><p>מחשבים מושכים מדיניות ברקע כל 90 דקות, עם תוספת אקראית של עד 30 דקות. DCs מושכים כל 5 דקות.</p></div>`,
+  quiz: [
+    { q: 'GPO ברמת הדומיין קובע רקע כחול, GPO ב-OU של המשתמש קובע רקע ירוק. אין Enforced. איזה רקע יהיה?', o: ['כחול', 'ירוק', 'ברירת המחדל של Windows', 'תלוי במה שנוצר קודם'], a: 1, e: 'לפי LSDOU, ה-OU מוחל אחרון וגובר.' },
+    { q: 'מה עושה <code>gpresult /r</code>?', o: ['מאפס את כל המדיניות', 'מציג אילו GPOs הוחלו ואילו סוננו על המשתמש והמחשב', 'מושך מדיניות חדשה מה-DC', 'מוחק את המטמון של Kerberos'], a: 1, e: 'למשיכה מחדש משתמשים ב-<code>gpupdate /force</code>.' },
+    { q: 'הגדרת GPO שמסומנת Enforced ברמת הדומיין. ב-OU מתחת מוגדר Block Inheritance. מה קורה?', o: ['ה-GPO נחסם', 'ה-GPO עדיין חל, Enforced גובר על Block Inheritance', 'שניהם מתבטלים', 'נוצרת שגיאה ב-Event Viewer'], a: 1, e: 'Enforced הוא בדיוק הדרך לוודא שמדיניות קריטית חלה בכל מקום.' }
+  ]
+},
+{
+  id: 'auth', ou: 'OU=06-Auth', title: 'אימות, זמן ותפקידי FSMO', min: 6,
+  body: `
+<h3>Kerberos ו-NTLM</h3>
+<p>כשמשתמש מתחבר לדומיין, Windows משתמש ב-<b>Kerberos</b> כברירת מחדל. המשתמש מקבל מה-DC "כרטיס" (TGT), ובעזרתו מבקש כרטיסים לשירותים: שרת קבצים, אתר פנימי, SQL. <b>NTLM</b> הוא פרוטוקול ישן יותר שמשמש כגיבוי, למשל כשניגשים לשרת לפי כתובת IP במקום לפי שם.</p>
+${code(`# show the user's Kerberos tickets
+klist
+
+# clear tickets (they will be re-requested automatically)
+klist purge`)}
+
+<h3>הזמן חייב להיות מסונכרן</h3>
+<p>Kerberos דוחה כרטיסים כשיש פער של יותר מ-<b>5 דקות</b> בין השעון של המחשב לשעון של ה-DC. מחשב שהשעון שלו זז יקבל שגיאות התחברות מוזרות.</p>
+${code(`w32tm /query /status
+w32tm /resync`)}
+<p>בדומיין, המחשבים מסתנכרנים מול ה-DCs, וה-DCs מסתנכרנים מול ה-PDC Emulator.</p>
+
+<h3>תפקידי FSMO</h3>
+<p>רוב העבודה ב-AD יכולה להיעשות בכל DC. חמש פעולות דורשות DC אחד שמחזיק את התפקיד:</p>
+<div class="tbl"><table>
+<tr><th>תפקיד</th><th>רמה</th><th>מה הוא עושה</th></tr>
+<tr><td>Schema Master</td><td>יער</td><td>שינויים בסכמה (למשל בהתקנת Exchange)</td></tr>
+<tr><td>Domain Naming Master</td><td>יער</td><td>הוספה והסרה של דומיינים</td></tr>
+<tr><td><b>PDC Emulator</b></td><td>דומיין</td><td>מקור הזמן, נעילות חשבון, שינויי סיסמה דחופים. זה התפקיד שהכי חשוב לתמיכה.</td></tr>
+<tr><td>RID Master</td><td>דומיין</td><td>מחלק טווחי מזהים ל-DCs ליצירת אובייקטים</td></tr>
+<tr><td>Infrastructure Master</td><td>דומיין</td><td>מעדכן הפניות לאובייקטים מדומיינים אחרים</td></tr>
+</table></div>
+${code(`# who holds the roles
+netdom query fsmo
+
+# which DC is this PC talking to
+nltest /dsgetdc:corp.local
+echo %LOGONSERVER%`)}
+
+<h3>רפליקציה</h3>
+<p>שיניתם משהו ב-DC אחד והמשתמש לא רואה את זה? יכול להיות שהמחשב שלו מדבר עם DC אחר שעוד לא קיבל את השינוי. בתוך אותו אתר זה בדרך כלל שניות, בין אתרים זה יכול לקחת יותר. לבדיקה (למי שיש הרשאות): <code>repadmin /replsummary</code>.</p>`,
+  quiz: [
+    { q: 'מחשב מקבל שגיאות Kerberos, ושעון המחשב מקדים ב-12 דקות. מה הבעיה?', o: ['כרטיס רשת', 'פער זמן מעל 5 דקות גורם ל-Kerberos לדחות כרטיסים', 'הסיסמה פגה', 'חסר GPO'], a: 1, e: 'מתקנים את הזמן (<code>w32tm /resync</code>) ובודקים שהמחשב מסתנכרן מול הדומיין.' },
+    { q: 'באיזה DC מחפשים את Event 4740 כדי למצוא מקור נעילה?', o: ['Schema Master', 'PDC Emulator', 'RID Master', 'בכל DC אקראי'], a: 1, e: 'נעילות מועברות מיד ל-PDC Emulator, ולכן שם האירועים מרוכזים.' },
+    { q: 'איך יודעים מול איזה DC המחשב של המשתמש עובד?', o: ['<code>ipconfig /release</code>', '<code>echo %LOGONSERVER%</code> או <code>nltest /dsgetdc:</code>', '<code>gpupdate</code>', '<code>tracert</code>'], a: 1, e: 'מועיל כשחושדים בבעיית רפליקציה.' }
+  ]
+},
+{
+  id: 'computers', ou: 'OU=07-Computers', title: 'מחשבים בדומיין', min: 5,
+  body: `
+<p>גם למחשב יש חשבון ב-AD, עם סיסמה משלו שמתחלפת אוטומטית כל 30 יום. בגלל זה מחשב יכול "לאבד" את הקשר לדומיין.</p>
+
+<h3>הצטרפות לדומיין</h3>
+${code(`# rename + join (run as local admin)
+Add-Computer -DomainName corp.local -NewName PC-TLV-042 -OUPath "OU=Laptops,OU=TLV,DC=corp,DC=local" -Credential CORP\\helpdesk.admin -Restart`)}
+<p>הפרמטר <code>-OUPath</code> שם את המחשב ישר ב-OU הנכון ולא ב-<code>CN=Computers</code>.</p>
+
+<div class="callout ticket"><span class="k">תרחיש: "The trust relationship between this workstation and the primary domain failed"</span>
+<p>הסיסמה של חשבון המחשב לא תואמת למה שה-DC מכיר. קורה אחרי שחזור מ-Snapshot, מחשב שהיה כבוי חודשים, או שם כפול.</p>
+<ol>
+<li>התחברו עם משתמש <b>מקומי</b> עם הרשאות מנהל (או נתקו מהרשת והתחברו עם פרטים שמורים)</li>
+<li>הריצו PowerShell כמנהל:</li>
+</ol>
+${code(`# check
+Test-ComputerSecureChannel
+
+# repair without leaving the domain
+Test-ComputerSecureChannel -Repair -Credential CORP\\helpdesk.admin`)}
+<p>אם זה לא עובד: מוציאים לקבוצת עבודה (Workgroup), מאתחלים ומצרפים מחדש. החשבון ב-AD נשאר עם החברויות בקבוצות.</p></div>
+
+<h3>משימות נפוצות</h3>
+${code(`# find a computer and its details
+Get-ADComputer PC-TLV-042 -Properties OperatingSystem, LastLogonDate, IPv4Address
+
+# computers not logged on for 90 days
+Search-ADAccount -ComputersOnly -AccountInactive -TimeSpan 90.00:00:00 | Select-Object Name, LastLogonDate
+
+# move to the right OU
+Get-ADComputer PC-TLV-042 | Move-ADObject -TargetPath "OU=Laptops,OU=TLV,DC=corp,DC=local"`)}
+
+<div class="callout tip"><span class="k">LAPS</span><p>בארגונים רבים סיסמת המנהל המקומי שונה בכל מחשב ומנוהלת על ידי <b>Windows LAPS</b>. מי שמורשה יכול לראות אותה בטאב LAPS של המחשב ב-ADUC, או עם <code>Get-LapsADPassword PC-TLV-042 -AsPlainText</code>.</p></div>`,
+  quiz: [
+    { q: 'מחשב משוחזר מ-Snapshot ישן מציג "trust relationship failed". מה הפתרון המהיר?', o: ['לאפס את סיסמת המשתמש', 'להתחבר מקומית ולהריץ <code>Test-ComputerSecureChannel -Repair</code>', 'למחוק את המשתמש מ-AD', 'להחליף כבל רשת'], a: 1, e: 'הסיסמה של חשבון המחשב לא מסונכרנת. מתקנים את הערוץ המאובטח.' },
+    { q: 'איך מבטיחים שמחשב חדש ייכנס ישר ל-OU הנכון?', o: ['לא ניתן, תמיד צריך להעביר ידנית', 'להשתמש ב-<code>-OUPath</code> ב-Add-Computer', 'להפעיל gpupdate לפני ההצטרפות', 'לתת לו שם שמתחיל בשם ה-OU'], a: 1, e: 'אפשר גם ליצור מראש את חשבון המחשב ב-OU הנכון (Pre-stage).' },
+    { q: 'איפה רואים את סיסמת המנהל המקומי של מחשב בארגון עם LAPS?', o: ['בקובץ על שולחן העבודה', 'בטאב LAPS ב-ADUC או ב-Get-LapsADPassword, למי שמורשה', 'ב-Event Viewer', 'היא זהה בכל המחשבים'], a: 1, e: 'הסיסמה ייחודית לכל מחשב ומתחלפת אוטומטית.' }
+  ]
+},
+{
+  id: 'cheatsheet', ou: 'OU=08-CheatSheet', title: 'דף עזר ותרגול סופי', min: 5,
+  body: `
+<p>הדף הזה נועד להישאר פתוח בטאב בזמן משמרת. כל הפקודות דורשות את מודול ActiveDirectory (חלק מ-RSAT). התקנה ב-Windows 10/11:</p>
+${code(`Add-WindowsCapability -Online -Name Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0
+Import-Module ActiveDirectory`)}
+
+<h3>לפי סוג הקריאה</h3>
+<div class="tbl"><table>
+<tr><th>הקריאה</th><th>בדיקה ראשונה</th><th>פעולה</th></tr>
+<tr><td>"לא מצליח להתחבר"</td><td><code>Get-ADUser x -Properties LockedOut,Enabled,PasswordExpired</code></td><td>Unlock / Reset / בירור השבתה</td></tr>
+<tr><td>"ננעלתי שוב"</td><td>Event 4740 ב-PDC Emulator</td><td>ניקוי סיסמה ישנה מטלפון או Credential Manager</td></tr>
+<tr><td>"אין לי גישה לתיקייה"</td><td><code>whoami /groups</code></td><td>הוספה לקבוצה, התנתקות והתחברות</td></tr>
+<tr><td>"הכונן או המדפסת לא מופיעים"</td><td><code>gpresult /r</code></td><td>בדיקת OU ו-Security Filtering, <code>gpupdate /force</code></td></tr>
+<tr><td>"trust relationship failed"</td><td><code>Test-ComputerSecureChannel</code></td><td><code>-Repair</code> או הצטרפות מחדש</td></tr>
+<tr><td>התחברות איטית או "domain not available"</td><td><code>ipconfig /all</code>, <code>nltest /dsgetdc:</code></td><td>תיקון DNS, בדיקת רשת</td></tr>
+<tr><td>שגיאות Kerberos מוזרות</td><td><code>w32tm /query /status</code></td><td><code>w32tm /resync</code>, <code>klist purge</code></td></tr>
+<tr><td>עובד חדש</td><td>לפי נוהל Onboarding</td><td>יצירה ב-OU הנכון, קבוצות לפי תפקיד</td></tr>
+</table></div>
+
+<h3>יצירת משתמש חדש</h3>
+${code(`New-ADUser -Name "Noa Cohen" -GivenName Noa -Surname Cohen -SamAccountName noa.cohen -UserPrincipalName noa.cohen@corp.com -Path "OU=Users,OU=HR,OU=TLV,DC=corp,DC=local" -Department HR -AccountPassword (Read-Host -AsSecureString "Initial password") -ChangePasswordAtLogon $true -Enabled $true
+
+# copy groups from a colleague in the same role
+Get-ADPrincipalGroupMembership dana.levi | Where-Object Name -ne "Domain Users" | ForEach-Object { Add-ADGroupMember -Identity $_ -Members noa.cohen }`)}
+
+<h3>חיפושים שימושיים</h3>
+${code(`# find a user by part of the name
+Get-ADUser -Filter "Name -like '*cohen*'" | Select-Object Name, SamAccountName
+
+# all users in a department
+Get-ADUser -Filter "Department -eq 'HR'" -Properties Department | Select-Object Name
+
+# accounts whose password never expires
+Get-ADUser -Filter "PasswordNeverExpires -eq 'True'" | Select-Object Name
+
+# disabled accounts
+Search-ADAccount -AccountDisabled -UsersOnly | Select-Object Name`)}
+
+<div class="callout tip"><span class="k">הרגלים טובים של תמיכה ב-AD</span>
+<ul>
+<li>לפני פעולה, ודאו זהות של מי שמבקש איפוס סיסמה לפי נוהל הארגון</li>
+<li>תעדו בכרטיס מה עשיתם ובאיזה אובייקט</li>
+<li>עבדו עם חשבון ניהול נפרד (למשל <code>adm-dana</code>) ולא עם המשתמש הרגיל שלכם</li>
+<li>לפני מחיקה או העברה של OU, בדקו שוב. "Protect from accidental deletion" קיים בשביל זה.</li>
+</ul></div>`,
+  quiz: [
+    { q: 'משתמש לא מצליח להתחבר. מה הבדיקה הראשונה הנכונה?', o: ['לאפס סיסמה מיד', 'לבדוק אם החשבון נעול, מושבת או עם סיסמה שפגה', 'להוסיף אותו ל-Domain Admins', 'לאתחל את ה-DC'], a: 1, e: 'שלושת המצבים נראים אותו דבר למשתמש, אבל הטיפול שונה.' },
+    { q: 'עובדת חדשה צריכה את אותן הרשאות כמו עמיתה בתפקיד. מה הדרך הנכונה?', o: ['לתת לה את הסיסמה של העמיתה', 'להעתיק את חברויות הקבוצה של העמיתה', 'לתת הרשאות ישירות על כל תיקייה', 'להוסיף אותה ל-Administrators'], a: 1, e: 'אפשר גם בממשק: קליק ימני על משתמש קיים ב-ADUC ובחירה ב-Copy.' },
+    { q: 'משתמש לא רואה מדפסת שמוגדרת ב-GPO. gpresult מראה שה-GPO תחת "Filtered Out (Security)". מה הבעיה?', o: ['המדפסת כבויה', 'המשתמש לא בקבוצה שמוגדרת ב-Security Filtering של ה-GPO', 'צריך להתקין דרייבר', 'ה-DC למטה'], a: 1, e: 'מוסיפים אותו לקבוצה המתאימה, ואז התנתקות והתחברות.' },
+    { q: 'למה כדאי לעבוד עם חשבון ניהול נפרד?', o: ['כי זה מהיר יותר', 'כדי שגלישה ומייל לא ירוצו עם הרשאות גבוהות, וכדי שתהיה הפרדה ותיעוד', 'כי AD לא מאפשר אחרת', 'אין סיבה'], a: 1, e: 'אם החשבון הרגיל נפרץ דרך מייל, התוקף לא מקבל הרשאות ניהול.' }
+  ]
+}
+];
+
+/* ---------- state ---------- */
+const KEY = 'ad-course-v1';
+let state = { done: {}, answers: {} };
+try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && s.done) state = s; } catch (e) {}
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} };
+
+const $ = (s) => document.querySelector(s);
+const treeList = $('#tree-list'), main = $('#main'), tree = $('#tree'), toggle = $('#map-toggle');
+
+function renderTree(cur) {
+  treeList.innerHTML = MODULES.map((m) => {
+    const d = !!state.done[m.id];
+    return '<li><button type="button" data-go="' + m.id + '" aria-current="' + (m.id === cur) + '" class="' + (d ? 'done' : '') + '">' +
+      (d ? ICON_DONE : ICON_OU) +
+      '<span class="label">' + m.title + '<small>' + m.ou + '</small></span>' +
+      '<span class="min">' + (d ? 'הושלם' : m.min + ' דק׳') + '</span></button></li>';
+  }).join('');
+}
+
+function renderProgress() {
+  const n = MODULES.filter(m => state.done[m.id]).length;
+  const pct = Math.round(n / MODULES.length * 100);
+  $('#prog-fill').style.width = pct + '%';
+  $('#prog-bar').setAttribute('aria-valuenow', pct);
+  $('#prog-txt').textContent = n + ' מתוך ' + MODULES.length + ' הושלמו';
+}
+
+function quizHTML(m) {
+  const ans = state.answers[m.id] || {};
+  return '<section class="quiz" aria-label="בדיקת הבנה"><h3>בדיקת הבנה</h3><p class="sub">' + m.quiz.length + ' שאלות קצרות. אפשר לענות ולחזור שוב מאוחר יותר.</p>' +
+    m.quiz.map((q, qi) => {
+      const picked = ans[qi];
+      const answered = picked !== undefined;
+      return '<div class="q" data-q="' + qi + '"><p class="qt">' + (qi + 1) + '. ' + q.q + '</p><div class="opts">' +
+        q.o.map((o, oi) => {
+          let cls = 'opt';
+          if (answered && oi === q.a) cls += ' right';
+          else if (answered && oi === picked) cls += ' wrong';
+          return '<button type="button" class="' + cls + '" data-opt="' + oi + '"' + (answered ? ' disabled' : '') + '>' + o + '</button>';
+        }).join('') + '</div>' +
+        (answered ? '<p class="explain"><b>' + (picked === q.a ? 'נכון.' : 'לא בדיוק.') + '</b> ' + q.e + '</p>' : '') +
+        '</div>';
+    }).join('') +
+    scoreHTML(m) + '</section>';
+}
+function scoreHTML(m) {
+  const ans = state.answers[m.id] || {};
+  const keys = Object.keys(ans);
+  if (keys.length < m.quiz.length) return '';
+  const right = keys.filter(k => ans[k] === m.quiz[k].a).length;
+  return '<p class="score">' + right + ' מתוך ' + m.quiz.length + ' נכונות' + (right < m.quiz.length ? ' · <button type="button" class="btn" data-retry>לנסות שוב</button>' : '') + '</p>';
+}
+
+function show(id, focus) {
+  const idx = Math.max(0, MODULES.findIndex(m => m.id === id));
+  const m = MODULES[idx];
+  const prev = MODULES[idx - 1], next = MODULES[idx + 1];
+  const done = !!state.done[m.id];
+  main.innerHTML =
+    '<header class="mod-head"><div class="eyebrow">' + m.ou + ',OU=Course,DC=helpdesk,DC=local</div>' +
+    '<h2>' + m.title + '</h2><div class="meta">מודול ' + (idx + 1) + ' מתוך ' + MODULES.length + ' · כ-' + m.min + ' דקות קריאה</div></header>' +
+    '<article class="prose">' + m.body + '</article>' + quizHTML(m) +
+    '<div class="nav">' +
+      '<button type="button" class="btn ' + (done ? 'done' : 'primary') + '" data-done>' + (done ? 'סומן כהושלם ✓' : 'סיימתי את המודול') + '</button>' +
+      '<span style="display:flex;gap:10px;flex-wrap:wrap">' +
+      (prev ? '<button type="button" class="btn" data-go="' + prev.id + '">→ הקודם</button>' : '') +
+      (next ? '<button type="button" class="btn" data-go="' + next.id + '">הבא ←</button>' : '') +
+      '</span></div>';
+  $('#cur-dn').textContent = m.ou + ',OU=Course,DC=helpdesk,DC=local';
+  renderTree(m.id);
+  renderProgress();
+  if (focus) { window.scrollTo({ top: 0 }); main.focus({ preventScroll: true }); }
+  current = m.id;
+}
+let current = null;
+
+function go(id) {
+  tree.classList.remove('open'); toggle.setAttribute('aria-expanded', 'false');
+  if (location.hash !== '#' + id) location.hash = id; else show(id, true);
+}
+
+document.addEventListener('click', (ev) => {
+  const t = ev.target.closest('button'); if (!t) return;
+  if (t.dataset.go) return go(t.dataset.go);
+  if (t.hasAttribute('data-copy')) {
+    const txt = t.nextElementSibling.textContent;
+    const ok = () => { t.textContent = 'הועתק'; setTimeout(() => t.textContent = 'העתקה', 1400); };
+    try {
+      navigator.clipboard.writeText(txt).then(ok, () => selectPre(t.nextElementSibling));
+    } catch (e) { selectPre(t.nextElementSibling); }
+    return;
+  }
+  if (t.dataset.opt !== undefined) {
+    const qi = +t.closest('.q').dataset.q;
+    (state.answers[current] = state.answers[current] || {})[qi] = +t.dataset.opt;
+    save();
+    const y = window.scrollY; show(current, false); window.scrollTo({ top: y });
+    return;
+  }
+  if (t.hasAttribute('data-retry')) { delete state.answers[current]; save(); show(current, false); document.querySelector('.quiz').scrollIntoView({ block: 'start' }); return; }
+  if (t.hasAttribute('data-done')) {
+    state.done[current] = !state.done[current]; save();
+    const idx = MODULES.findIndex(m => m.id === current);
+    if (state.done[current] && MODULES[idx + 1]) go(MODULES[idx + 1].id); else { const y = window.scrollY; show(current, false); window.scrollTo({ top: y }); }
+  }
+});
+function selectPre(pre) { const r = document.createRange(); r.selectNodeContents(pre); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+
+toggle.addEventListener('click', () => {
+  const open = tree.classList.toggle('open');
+  toggle.setAttribute('aria-expanded', String(open));
+});
+
+window.addEventListener('hashchange', () => show(location.hash.slice(1), true));
+document.documentElement.setAttribute('dir', 'rtl');
+document.documentElement.setAttribute('lang', 'he');
+const firstOpen = MODULES.find(m => !state.done[m.id]) || MODULES[0];
+show(location.hash.slice(1) || firstOpen.id, false);
+</script>
